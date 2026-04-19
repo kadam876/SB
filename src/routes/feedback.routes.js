@@ -4,6 +4,7 @@ const feedbackController = require('../controllers/feedback.controller');
 const authMiddleware = require('../middleware/auth');
 
 router.get('/product/:productId', feedbackController.getProductFeedback);
+router.get('/product/:productId/mine', authMiddleware, feedbackController.getMyProductFeedback);
 router.post('/', authMiddleware, feedbackController.submitFeedback);
 
 module.exports = router;

@@ -22,3 +22,15 @@ exports.getProductFeedback = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
+exports.getMyProductFeedback = async (req, res) => {
+    try {
+        const feedback = await Feedback.findOne({ 
+            productId: req.params.productId,
+            userId: req.user.id 
+        });
+        res.json(feedback ? feedback.toJSON() : null);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
