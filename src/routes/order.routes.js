@@ -19,6 +19,7 @@ router.use(authMiddleware);
 router.post('/',               orderController.createOrder);
 router.post('/verify-payment', orderController.verifyPayment);
 router.post('/retry-session',  orderController.retrySession);
+router.post('/refund',         orderController.initiateRefund);   // admin: trigger a Cashfree PG refund
 router.get('/my-orders',       orderController.getMyOrders);
 
 module.exports = router;

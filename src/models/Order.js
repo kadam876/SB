@@ -25,8 +25,12 @@ const orderSchema = new mongoose.Schema({
     trackingNumber: String,
     orderType: String,
     seeded: { type: Boolean, default: false },
-    cashfreeOrderId: String,
-    cashfreePaymentId: String
+    cashfreeOrderId:   String,
+    cashfreePaymentId: String,   // actual cf_payment_id (NOT cf_order_id)
+    refundId:          String,   // unique refund reference we generate
+    refundStatus:      String,   // PENDING | SUCCESS | CANCELLED | ONHOLD
+    refundAmount:      Number,
+    refundedAt:        Date
 }, { collection: 'orders' });
 
 orderSchema.set('toJSON', {

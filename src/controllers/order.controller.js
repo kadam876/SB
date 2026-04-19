@@ -1,5 +1,6 @@
 const Order   = require('../models/Order');
 const Product  = require('../models/Product');
+const User     = require('../models/User');
 const axios    = require('axios');
 const crypto   = require('crypto');
 
@@ -30,6 +31,29 @@ const cfCreateOrder = async (payload) => {
 /** Fetch the status of a Cashfree order. Returns the order object (includes order_status). */
 const cfFetchOrder = async (cfOrderId) => {
     const res = await axios.get(`${CF_BASE_URL}/orders/${cfOrderId}`, { headers: cfHeaders() });
+    return res.data;
+};
+
+/**
+ * Fetch payments for a Cashfree order.
+ * Returns array of payment objects — each has cf_payment_id, payment_status, etc.
+ */
+const cfGetPayments = async (cfOrderId) => {
+    const res = await axios.get(`${CF_BASE_URL}/orders/${cfOrderId}/payments`, { headers: cfHeaders() });
+    return res.data; // array
+};
+
+/**
+ * Initiate a PG refund for a successful payment.
+ * refundId must be unique per order (we use orderId + timestamp).
+ * Docs: POST /pg/orders/{order_id}/refunds
+ */
+const cfCreateRefund = async (cfOrderId, refundId, refundAmount, refundNote = 'Refund') => {
+    const res = await axios.post(
+        `${CF_BASE_URL}/orders/${cfOrderId}/refunds`,
+        { refund_id: refundId, refund_amount: Number(refundAmount.toFixed(2)), refund_note: refundNote },
+        { headers: cfHeaders() },
+    );
     return res.data;
 };
 
@@ -66,6 +90,7 @@ exports.createOrder = async (req, res) => {
             totalAmount,
             customerPhone,
             customerEmail,
+            customerName,          // sent by frontend from logged-in user object
         } = req.body;
 
         // Resolve adminId from the first product in the order
@@ -109,6 +134,16 @@ exports.createOrder = async (req, res) => {
                 });
             }
 
+            // Fetch real user details for Cashfree customer info.
+            // Cashfree requires a valid phone number for production payments.
+            const dbUser = await User.findById(req.user.id).select('name email phone').lean();
+            const custPhone = dbUser?.phone?.replace(/\D/g, '') || customerPhone || null;
+            if (!custPhone) {
+                return res.status(400).json({
+                    error: 'A phone number is required for online payment. Please update your profile with a valid phone number.',
+                });
+            }
+
             const cfOrderId = makeCfOrderId();
 
             const cfData = await cfCreateOrder({
@@ -117,9 +152,9 @@ exports.createOrder = async (req, res) => {
                 order_currency: 'INR',
                 customer_details: {
                     customer_id:    req.user.id,
-                    customer_phone: customerPhone || '9999999999',
-                    customer_email: customerEmail || '',
-                    customer_name:  req.user.name || 'Customer',
+                    customer_phone: custPhone,
+                    customer_email: dbUser?.email || customerEmail || '',
+                    customer_name:  dbUser?.name  || customerName  || 'Customer',
                 },
                 order_meta: {
                     return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/my-orders?order_id={order_id}`,
@@ -169,6 +204,14 @@ exports.retrySession = async (req, res) => {
         if (order.status === 'PAID') return res.status(400).json({ error: 'Order is already paid.' });
 
         // Create a new Cashfree order_id to avoid reusing a stuck/expired session.
+        const dbUser   = await User.findById(req.user.id).select('name email phone').lean();
+        const custPhone = dbUser?.phone?.replace(/\D/g, '') || null;
+        if (!custPhone) {
+            return res.status(400).json({
+                error: 'A phone number is required for online payment. Please update your profile.',
+            });
+        }
+
         const cfOrderId = makeCfOrderId();
 
         const cfData = await cfCreateOrder({
@@ -177,7 +220,9 @@ exports.retrySession = async (req, res) => {
             order_currency: 'INR',
             customer_details: {
                 customer_id:    req.user.id,
-                customer_phone: '9999999999',
+                customer_phone: custPhone,
+                customer_email: dbUser?.email || '',
+                customer_name:  dbUser?.name  || 'Customer',
             },
             order_meta: {
                 return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/my-orders?order_id={order_id}`,
@@ -213,9 +258,20 @@ exports.verifyPayment = async (req, res) => {
         const orderStatus = cfOrder?.order_status; // 'PAID' | 'ACTIVE' | 'EXPIRED' …
 
         if (orderStatus === 'PAID') {
+            // Fetch actual payments to get the real cf_payment_id (needed for refunds).
+            // cfOrder only has cf_order_id; the payment ID is on the payments list.
+            let realPaymentId = cfOrder.cf_order_id; // fallback
+            try {
+                const payments = await cfGetPayments(cashfreeOrderId);
+                const paid = Array.isArray(payments)
+                    ? payments.find(p => p.payment_status === 'SUCCESS')
+                    : null;
+                if (paid?.cf_payment_id) realPaymentId = String(paid.cf_payment_id);
+            } catch (_) { /* non-fatal — fallback used */ }
+
             const order = await Order.findOneAndUpdate(
                 { cashfreeOrderId },
-                { status: 'PAID', cashfreePaymentId: cfOrder.cf_order_id },
+                { status: 'PAID', cashfreePaymentId: realPaymentId },
                 { new: true },
             );
             if (!order) return res.status(404).json({ error: 'Order not found' });
@@ -254,11 +310,12 @@ exports.cashfreeWebhook = async (req, res) => {
         const type  = event?.type;
 
         if (type === 'PAYMENT_SUCCESS_WEBHOOK') {
-            const cfOrderId = event?.data?.order?.order_id;
+            const cfOrderId   = event?.data?.order?.order_id;
+            const cfPaymentId = String(event?.data?.payment?.cf_payment_id || '');
             if (cfOrderId) {
                 await Order.findOneAndUpdate(
                     { cashfreeOrderId: cfOrderId },
-                    { status: 'PAID', cashfreePaymentId: event?.data?.payment?.cf_payment_id },
+                    { status: 'PAID', cashfreePaymentId: cfPaymentId },
                 );
             }
         }
@@ -273,10 +330,83 @@ exports.cashfreeWebhook = async (req, res) => {
             }
         }
 
+        // ── Refund webhook events ────────────────────────────────────────────
+        if (type === 'REFUND_STATUS_WEBHOOK') {
+            const cfOrderId    = event?.data?.order?.order_id;
+            const refundStatus = event?.data?.refund?.refund_status; // SUCCESS | CANCELLED | ONHOLD
+            const refundId     = event?.data?.refund?.refund_id;
+            if (cfOrderId) {
+                const updateFields = { refundStatus };
+                if (refundStatus === 'SUCCESS') {
+                    updateFields.status      = 'REFUNDED';
+                    updateFields.refundedAt  = new Date();
+                }
+                await Order.findOneAndUpdate({ cashfreeOrderId: cfOrderId }, updateFields);
+                console.log(`Refund webhook [${refundId}]: ${refundStatus} for order ${cfOrderId}`);
+            }
+        }
+
         res.status(200).send('OK');
 
     } catch (err) {
         console.error('Cashfree webhook error:', err.message);
         res.status(400).send('Webhook processing failed');
+    }
+};
+
+// ── initiateRefund (admin only) ───────────────────────────────────────────────
+/**
+ * POST /api/orders/refund
+ * Body: { orderId, refundAmount? }   — orderId is your MongoDB _id
+ *
+ * Calls Cashfree PG Refunds API. The refund_id we send is stable:
+ *   RF_{mongoOrderId}   so duplicate calls return the existing refund, not an error.
+ */
+exports.initiateRefund = async (req, res) => {
+    try {
+        const { orderId, refundAmount } = req.body;
+        if (!orderId) return res.status(400).json({ error: 'orderId is required.' });
+
+        const order = await Order.findById(orderId);
+        if (!order)            return res.status(404).json({ error: 'Order not found.' });
+        if (order.status !== 'PAID')
+            return res.status(400).json({ error: `Cannot refund an order with status "${order.status}".` });
+        if (!order.cashfreeOrderId)
+            return res.status(400).json({ error: 'No Cashfree order ID linked to this order.' });
+
+        const amount     = refundAmount ? Number(refundAmount) : order.totalAmount;
+        const refundId   = `RF_${order._id}`;
+
+        // Call Cashfree PG Refunds API
+        const cfRefund = await cfCreateRefund(
+            order.cashfreeOrderId,
+            refundId,
+            amount,
+            'Refund initiated by admin',
+        );
+
+        // Persist refund metadata immediately (webhook will update final status)
+        order.refundId     = refundId;
+        order.refundAmount = amount;
+        order.refundStatus = cfRefund.refund_status || 'PENDING';
+        if (cfRefund.refund_status === 'SUCCESS') {
+            order.status     = 'REFUNDED';
+            order.refundedAt = new Date();
+        } else {
+            order.status = 'REFUND_INITIATED';
+        }
+        await order.save();
+
+        console.log(`Refund initiated [${refundId}]: status=${order.refundStatus}, amount=${amount}`);
+        res.json({ success: true, refundId, refundStatus: order.refundStatus, order: order.toJSON() });
+
+    } catch (err) {
+        const detail = err.response?.data || err.message;
+        console.error('initiateRefund error:', detail);
+        // Surface the exact Cashfree error message so you can see what went wrong
+        res.status(500).json({
+            error:   detail?.message || err.message,
+            cfError: detail,          // full Cashfree error body for debugging
+        });
     }
 };
