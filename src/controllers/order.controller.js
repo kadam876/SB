@@ -137,13 +137,15 @@ exports.createOrder = async (req, res) => {
             // Fetch real user details for Cashfree customer info.
             const dbUser = await User.findById(req.user.id).select('name email phone').lean();
 
-            // Phone fallback chain: DB → frontend-supplied → placeholder.
-            // We do NOT hard-block here; Cashfree will validate on their side
-            // and return a clear error if the phone is truly invalid.
-            const rawPhone = dbUser?.phone?.replace(/\D/g, '')
-                          || customerPhone?.replace(/\D/g, '')
-                          || '9999999999';   // Cashfree-accepted placeholder
-            const custPhone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
+            // Phone: prefer DB → fall back to what the frontend sent.
+            // The frontend already validates that a real phone exists before calling this endpoint.
+            const rawPhone = (dbUser?.phone || customerPhone || '').replace(/\D/g, '');
+            if (!rawPhone || rawPhone.length < 10) {
+                return res.status(400).json({
+                    error: 'A valid 10-digit phone number is required. Please add your mobile number in your Profile.',
+                });
+            }
+            const custPhone = rawPhone.slice(-10);
 
             const cfOrderId = makeCfOrderId();
 
@@ -205,9 +207,14 @@ exports.retrySession = async (req, res) => {
         if (order.status === 'PAID') return res.status(400).json({ error: 'Order is already paid.' });
 
         // Create a new Cashfree order_id to avoid reusing a stuck/expired session.
-        const dbUser  = await User.findById(req.user.id).select('name email phone').lean();
-        const rawPhone = dbUser?.phone?.replace(/\D/g, '') || '9999999999';
-        const custPhone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
+        const dbUser   = await User.findById(req.user.id).select('name email phone').lean();
+        const rawPhone  = (dbUser?.phone || '').replace(/\D/g, '');
+        if (!rawPhone || rawPhone.length < 10) {
+            return res.status(400).json({
+                error: 'A valid 10-digit phone number is required. Please add your mobile number in your Profile.',
+            });
+        }
+        const custPhone = rawPhone.slice(-10);
 
         const cfOrderId = makeCfOrderId();
 
