@@ -1,8 +1,9 @@
-// Deployment Pulse: v1.0.4-DB-Guard
+// Deployment Pulse: v1.0.5-Perf
 require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
+const compression = require('compression');
 const connectDB = require('./src/config/db');
 const authRoutes = require('./src/routes/auth.routes');
 const productRoutes = require('./src/routes/product.routes');
@@ -36,6 +37,19 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With']
 }));
+// Gzip compression — cuts API response sizes by 60-80%
+app.use(compression());
+
+// Cache-Control: tell the browser to cache static-ish GET responses for 60s
+// (short enough to be fresh, long enough to avoid redundant re-fetches on navigation)
+app.use((req, res, next) => {
+    if (req.method === 'GET') {
+        res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+    } else {
+        res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+});
 
 // DB-Guard: Await the MongoDB connection on every request before any route handler runs.
 // This is critical for Vercel serverless cold-starts where connectDB() hasn't finished
