@@ -25,8 +25,8 @@ const orderSchema = new mongoose.Schema({
     trackingNumber: String,
     orderType: String,
     seeded: { type: Boolean, default: false },
-    razorpayOrderId: String,
-    razorpayPaymentId: String
+    cashfreeOrderId: String,
+    cashfreePaymentId: String
 }, { collection: 'orders' });
 
 orderSchema.set('toJSON', {

@@ -21,15 +21,18 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             "default-src": ["'self'"],
-            "script-src": ["'self'", "'unsafe-inline'", "https://checkout.razorpay.com"],
-            "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-            "font-src": ["'self'", "data:", "https://fonts.gstatic.com", "https://sandhya-b.vercel.app", "http://localhost:8080"],
-            "img-src": ["'self'", "data:", "blob:", "https://*.supabase.co"],
-            "connect-src": ["'self'", "https://sandhya-b.vercel.app", "http://localhost:8080", "https://*.supabase.co"],
-            "frame-src": ["'self'", "https://api.razorpay.com"]
+            "script-src":  ["'self'", "'unsafe-inline'", "https://sdk.cashfree.com", "https://*.cashfree.com"],
+            "style-src":   ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            "font-src":    ["'self'", "data:", "https://fonts.gstatic.com", "https://sandhya-b.vercel.app", "http://localhost:8080"],
+            "img-src":     ["'self'", "data:", "blob:", "https://*.supabase.co", "https://*.cashfree.com"],
+            "connect-src": ["'self'", "https://sandhya-b.vercel.app", "http://localhost:8080", "https://*.supabase.co", "https://*.cashfree.com"],
+            "frame-src":   ["'self'", "https://*.cashfree.com"]
         },
     },
 }));
+
+// NOTE: rawBody capture is applied ONLY on the Cashfree webhook route (see order.routes.js)
+// so that express.json() works normally for every other endpoint.
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 app.use(cors({
