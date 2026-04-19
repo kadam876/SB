@@ -1,4 +1,4 @@
-// Deployment Pulse: v1.0.1
+// Deployment Pulse: v1.0.4-DB-Guard
 require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
@@ -37,6 +37,19 @@ app.use(cors({
     allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With']
 }));
 
+// DB-Guard: Await the MongoDB connection on every request before any route handler runs.
+// This is critical for Vercel serverless cold-starts where connectDB() hasn't finished
+// by the time the first request arrives.
+app.use(async (req, res, next) => {
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        console.error('DB connection failed for request:', req.method, req.path, err.message);
+        res.status(503).json({ error: 'Database unavailable. Please try again.' });
+    }
+});
+
 // Route Mapping
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -53,14 +66,11 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'UP', message: 'Node.js Express Backend is active - v1.0.3-Diagnostic-Active' });
+    res.json({ status: 'UP', message: 'Node.js Express Backend is active - v1.0.4-DB-Guard' });
 });
 
 // Database and Server Init
 const PORT = process.env.PORT || 8080;
-
-// Initialize Database
-connectDB();
 
 // Only start the server if not running as a Vercel serverless function
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
