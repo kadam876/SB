@@ -165,13 +165,16 @@ exports.createOrder = async (req, res) => {
                 },
             });
 
-            newOrder.cashfreeOrderId = cfData.cf_order_id || cfOrderId;
+            // IMPORTANT: Store OUR order_id (SF_xxx), NOT cfData.cf_order_id.
+            // Cashfree's REST API (payments, refunds) uses the order_id WE created in URL paths.
+            // cf_order_id is Cashfree's internal numeric ID — unusable for refund API calls.
+            newOrder.cashfreeOrderId = cfOrderId;   // e.g. SF_1714123456_ABC
             await newOrder.save();
 
             return res.status(201).json({
                 ...newOrder.toJSON(),
                 paymentSessionId: cfData.payment_session_id,
-                cashfreeOrderId:  cfData.cf_order_id || cfOrderId,
+                cashfreeOrderId:  cfOrderId,
             });
         }
 
