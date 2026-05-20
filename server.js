@@ -1,5 +1,7 @@
 // Deployment Pulse: v1.0.5-Perf
 require('dotenv').config();
+// Local overrides (e.g. MONGO_URI for localhost) — not committed; see .env.local.example
+require('dotenv').config({ path: '.env.local', override: true });
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -58,12 +60,20 @@ app.use((req, res, next) => {
 // This is critical for Vercel serverless cold-starts where connectDB() hasn't finished
 // by the time the first request arrives.
 app.use(async (req, res, next) => {
+    // Always allow health checks even if DB is down (useful for dev + uptime monitors)
+    if (req.path === '/' || req.path === '/api/health') {
+        return next();
+    }
     try {
         await connectDB();
         next();
     } catch (err) {
         console.error('DB connection failed for request:', req.method, req.path, err.message);
-        res.status(503).json({ error: 'Database unavailable. Please try again.' });
+        const isAtlasIpBlock = /whitelist|IP that isn't/i.test(err.message);
+        const hint = process.env.NODE_ENV !== 'production' && isAtlasIpBlock
+            ? 'MongoDB Atlas blocked this machine. In Atlas → Network Access, add your current IP (or 0.0.0.0/0 for dev).'
+            : 'Database unavailable. Please try again.';
+        res.status(503).json({ error: hint });
     }
 });
 

@@ -23,7 +23,6 @@ const connectDB = () => {
         .connect(process.env.MONGO_URI, {
             serverSelectionTimeoutMS: 10000,
             socketTimeoutMS: 45000,
-            family: 4 // Force IPv4
         })
         .then(() => {
             const host = process.env.MONGO_URI.includes('@')
@@ -34,9 +33,6 @@ const connectDB = () => {
         .catch((err) => {
             console.error('MongoDB connection error:', err.message);
             _connectionPromise = null; // allow retry on next request
-            if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-                process.exit(1);
-            }
             throw err;
         });
 

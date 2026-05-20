@@ -33,7 +33,7 @@ const STATUSES = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'DELIVERED', '
 
 async function seed() {
   try {
-    await mongoose.connect(process.env.MONGO_URI, { family: 4 });
+    await mongoose.connect(process.env.MONGO_URI);
     console.log('✅ Connected to MongoDB:', mongoose.connection.host);
 
     // 1. Find or create admin
